@@ -1,0 +1,55 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+logs/
+*.log
+
+# Models and data
+models/
+data/
+*.pkl
+*.pt
+*.pth
+*.h5
+
+# FAISS index
+*.index
+*.docs.json
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
