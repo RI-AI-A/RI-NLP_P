@@ -60,6 +60,24 @@ class NLPConfig(BaseSettings):
         "basket_size"
     ]
     
+    # LLM Configuration
+    use_llm: bool = True
+    llm_provider: str = "ollama"  # ollama, openai, anthropic
+    llm_model: str = "llama3.2:3b"
+    llm_base_url: str = "http://localhost:11434"
+    llm_temperature: float = 0.7
+    llm_max_tokens: int = 500
+    llm_timeout: int = 30
+    
+    # Optional API Keys
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    
+    # LLM Features
+    enable_llm_caching: bool = True
+    enable_hybrid_mode: bool = False
+    llm_fallback_to_rules: bool = True
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

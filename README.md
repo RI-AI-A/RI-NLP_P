@@ -51,11 +51,11 @@ This NLP service is designed to:
 ## 📋 Features
 
 ### NLP Capabilities
-- **Intent Classification**: 7 intent classes using BERT/DistilBERT with zero-shot fallback
-- **Slot Filling**: spaCy NER + regex for extracting branch_id, time_range, kpi_type, employee_name, event_type, product_name
+- **Intent Classification**: LLM-powered (Ollama/OpenAI/Anthropic) with rule-based fallback
+- **Slot Filling**: LLM-powered entity extraction with context understanding
 - **Query Routing**: Maps intents + slots to REST API endpoints (inc. Situation/Recommendation APIs)
 - **RAG-lite Retrieval**: FAISS vector search over knowledge base (KPI docs, business rules, analytics docs)
-- **Response Generation**: Template-based with retrieved context injection
+- **Response Generation**: Natural language generation using LLM with retrieved context
 
 ### Safety & Quality
 - **Profanity Filter**: Blocks inappropriate language
@@ -76,6 +76,7 @@ This NLP service is designed to:
 ### Prerequisites
 - Python 3.10+
 - PostgreSQL 15+
+- **Ollama** (for LLM support) - See [OLLAMA_SETUP.md](OLLAMA_SETUP.md)
 
 ### Installation & Run
 
@@ -90,9 +91,14 @@ pip install -r requirements.txt
 # Download spaCy model
 python -m spacy download en_core_web_sm
 
+# Set up Ollama (for LLM support)
+# See OLLAMA_SETUP.md for detailed instructions
+ollama serve  # In a separate terminal
+ollama pull llama3.2:3b
+
 # Set up environment
 cp .env.example .env
-# Edit .env with your database credentials
+# Edit .env with your database credentials and LLM settings
 
 # Run database migrations
 alembic upgrade head
@@ -225,10 +231,18 @@ See `.env.example` for all configuration options:
 
 ### Model Configuration
 
-The service uses:
-- **Intent Classification**: `distilbert-base-uncased` (fine-tuned) or `facebook/bart-large-mnli` (zero-shot)
+The service supports two modes:
+
+**LLM Mode (Default)**:
+- **LLM Provider**: Ollama (local), OpenAI, or Anthropic
+- **Default Model**: `llama3.2:3b` (Ollama)
 - **Embeddings**: `sentence-transformers/all-MiniLM-L6-v2` (384-dim)
+- **Features**: Natural language understanding, context-aware responses
+
+**Rule-Based Mode (Fallback)**:
+- **Intent Classification**: `distilbert-base-uncased` or `facebook/bart-large-mnli`
 - **NER**: `en_core_web_sm` (spaCy)
+- **Response**: Template-based
 
 ## 🗄️ Database Schema
 

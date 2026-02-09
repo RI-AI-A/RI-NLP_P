@@ -2,11 +2,21 @@
 from typing import Dict, Any
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Rule-based components
 from nlp_service.intent_classifier import get_intent_classifier
 from nlp_service.slot_filling import get_slot_filler
 from nlp_service.query_router import get_query_router
 from nlp_service.response_generator import get_response_generator
+
+# LLM-powered components
+from nlp_service.llm_intent_classifier import get_llm_intent_classifier
+from nlp_service.llm_slot_filler import get_llm_slot_filler
+from nlp_service.llm_response_generator import get_llm_response_generator
+
+# Shared components
 from nlp_service.guardrails import get_guardrails
+from nlp_service.config import nlp_config
 from db.models import NLPQueryLog
 from schemas.nlp_response import NLPResponse, NLPErrorResponse
 import structlog
@@ -15,13 +25,31 @@ logger = structlog.get_logger()
 
 
 class OrchestrationService:
-    """Orchestrates the NLP pipeline"""
+    """Orchestrates the NLP pipeline with LLM or rule-based components"""
     
     def __init__(self):
+        self.config = nlp_config
+        
+        # Initialize rule-based components (for fallback)
         self.intent_classifier = get_intent_classifier()
         self.slot_filler = get_slot_filler()
-        self.query_router = get_query_router()
         self.response_generator = get_response_generator()
+        
+        # Initialize LLM components if enabled
+        if self.config.use_llm:
+            try:
+                self.llm_intent_classifier = get_llm_intent_classifier()
+                self.llm_slot_filler = get_llm_slot_filler()
+                self.llm_response_generator = get_llm_response_generator()
+                logger.info("LLM components initialized successfully")
+            except Exception as e:
+                logger.error("Failed to initialize LLM components", error=str(e))
+                if not self.config.llm_fallback_to_rules:
+                    raise
+                logger.warning("LLM initialization failed, will use rule-based fallback")
+        
+        # Shared components
+        self.query_router = get_query_router()
         self.guardrails = get_guardrails()
     
     async def process_query(
@@ -47,25 +75,69 @@ class OrchestrationService:
             logger.info("Processing query", 
                        query=query[:100], 
                        conversation_id=str(conversation_id),
-                       user_role=user_role)
+                       user_role=user_role,
+                       use_llm=self.config.use_llm)
+            
+            # Determine which pipeline to use
+            use_llm = self.config.use_llm and hasattr(self, 'llm_intent_classifier')
             
             # Step 1: Intent Classification
-            intent, confidence = await self.intent_classifier.predict(query)
-            logger.info("Intent classified", intent=intent, confidence=confidence)
+            if use_llm:
+                try:
+                    intent, confidence = await self.llm_intent_classifier.predict(query)
+                    logger.info("Intent classified (LLM)", intent=intent, confidence=confidence)
+                except Exception as e:
+                    if self.config.llm_fallback_to_rules:
+                        logger.warning("LLM intent classification failed, using fallback", error=str(e))
+                        intent, confidence = await self.intent_classifier.predict(query)
+                        logger.info("Intent classified (fallback)", intent=intent, confidence=confidence)
+                    else:
+                        raise
+            else:
+                intent, confidence = await self.intent_classifier.predict(query)
+                logger.info("Intent classified (rule-based)", intent=intent, confidence=confidence)
             
             # Step 2: Slot Filling
-            slots = await self.slot_filler.extract_slots(query, intent)
-            logger.info("Slots extracted", slots=slots)
+            if use_llm:
+                try:
+                    slots = await self.llm_slot_filler.extract_slots(query, intent)
+                    logger.info("Slots extracted (LLM)", slots=slots)
+                except Exception as e:
+                    if self.config.llm_fallback_to_rules:
+                        logger.warning("LLM slot extraction failed, using fallback", error=str(e))
+                        slots = await self.slot_filler.extract_slots(query, intent)
+                        logger.info("Slots extracted (fallback)", slots=slots)
+                    else:
+                        raise
+            else:
+                slots = await self.slot_filler.extract_slots(query, intent)
+                logger.info("Slots extracted (rule-based)", slots=slots)
             
             # Step 3: Query Routing
             routed_endpoint = await self.query_router.route(intent, slots)
             logger.info("Query routed", endpoint=routed_endpoint)
             
             # Step 4: Response Generation
-            response_text, sources = await self.response_generator.generate(
-                query, intent, slots, routed_endpoint
-            )
-            logger.info("Response generated", sources=sources)
+            if use_llm:
+                try:
+                    response_text, sources = await self.llm_response_generator.generate(
+                        query, intent, slots, routed_endpoint
+                    )
+                    logger.info("Response generated (LLM)", sources=sources)
+                except Exception as e:
+                    if self.config.llm_fallback_to_rules:
+                        logger.warning("LLM response generation failed, using fallback", error=str(e))
+                        response_text, sources = await self.response_generator.generate(
+                            query, intent, slots, routed_endpoint
+                        )
+                        logger.info("Response generated (fallback)", sources=sources)
+                    else:
+                        raise
+            else:
+                response_text, sources = await self.response_generator.generate(
+                    query, intent, slots, routed_endpoint
+                )
+                logger.info("Response generated (rule-based)", sources=sources)
             
             # Step 5: Guardrails Check
             guardrail_result = await self.guardrails.check_all(
