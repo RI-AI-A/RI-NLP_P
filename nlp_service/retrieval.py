@@ -1,4 +1,4 @@
-"""FAISS-based Retrieval System"""
+"""FAISS-based Retrieval System (fixed async init)"""
 import os
 from typing import List, Dict, Any, Tuple
 import numpy as np
@@ -16,42 +16,58 @@ class Document:
     def __init__(self, text: str, metadata: Dict[str, Any]):
         self.text = text
         self.metadata = metadata
-    
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "text": self.text,
-            "metadata": self.metadata
-        }
-    
+        return {"text": self.text, "metadata": self.metadata}
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Document':
+    def from_dict(cls, data: Dict[str, Any]) -> "Document":
         return cls(data["text"], data["metadata"])
 
 
 class RetrievalSystem:
-    """FAISS-based semantic retrieval system"""
-    
+    """
+    FAISS-based semantic retrieval system.
+
+    Important fix:
+    - build_index() is async, so we MUST NOT call it inside __init__ / _initialize().
+    - Instead, we call it from get_retrieval_system() where we can await.
+    """
+
     def __init__(self):
         self.config = nlp_config
         self.embedding_service = get_embedding_service()
         self.index = None
         self.documents: List[Document] = []
         self._initialize()
-    
+
     def _initialize(self):
-        """Initialize or load FAISS index"""
+        """
+        Initialize or load FAISS index.
+
+        MVP behavior:
+        - If an index exists on disk -> load it (sync).
+        - Else -> create default documents (sync), and let async build happen later.
+        """
         try:
-            if os.path.exists(f"{self.config.faiss_index_path}.index"):
+            index_file = f"{self.config.faiss_index_path}.index"
+            docs_file = f"{self.config.faiss_index_path}.docs.json"
+
+            if os.path.exists(index_file) and os.path.exists(docs_file):
                 self.load_index()
             else:
-                logger.info("Creating new FAISS index")
+                logger.info("Creating new FAISS index (documents only; index will build asynchronously)")
                 self._create_default_documents()
-                self.build_index()
+
+                # Create an empty index placeholder (so search won't crash)
+                # Real embeddings will be added when build_index() is awaited.
+                self.index = faiss.IndexFlatIP(self.config.faiss_dimension)
+
         except Exception as e:
             logger.error("Failed to initialize retrieval system", error=str(e))
             # Create empty index as fallback
             self.index = faiss.IndexFlatIP(self.config.faiss_dimension)
-    
+
     def _create_default_documents(self):
         """Create default knowledge base documents"""
         default_docs = [
@@ -81,7 +97,7 @@ class RetrievalSystem:
                 "It's a key metric for cross-selling effectiveness.",
                 {"source": "kpi_docs", "type": "kpi_explanation", "kpi": "basket_size"}
             ),
-            
+
             # Business Rules
             Document(
                 "Branch performance is evaluated daily against weekly baselines. "
@@ -98,7 +114,7 @@ class RetrievalSystem:
                 "All promotions are tracked in the system for effectiveness analysis.",
                 {"source": "business_rules", "type": "policy"}
             ),
-            
+
             # Analytics Documentation
             Document(
                 "The analytics system processes data in real-time using computer vision. "
@@ -115,7 +131,7 @@ class RetrievalSystem:
                 "Real-time updates are provided through the dashboard.",
                 {"source": "analytics_docs", "type": "feature"}
             ),
-            
+
             # Task Management
             Document(
                 "Tasks can be assigned to employees with priority levels: low, medium, high, urgent. "
@@ -128,130 +144,112 @@ class RetrievalSystem:
                 {"source": "task_docs", "type": "reference"}
             ),
         ]
-        
+
         self.documents = default_docs
         logger.info("Created default knowledge base", doc_count=len(default_docs))
-    
+
     async def build_index(self):
         """Build FAISS index from documents"""
         try:
             if not self.documents:
                 logger.warning("No documents to index")
                 return
-            
+
             logger.info("Building FAISS index", doc_count=len(self.documents))
-            
-            # Extract texts
+
             texts = [doc.text for doc in self.documents]
-            
-            # Generate embeddings
+
+            # Generate embeddings (async)
             embeddings = await self.embedding_service.encode(texts, normalize=True)
-            
-            # Create FAISS index (Inner Product for normalized vectors = cosine similarity)
+
             dimension = embeddings.shape[1]
             self.index = faiss.IndexFlatIP(dimension)
-            
-            # Add embeddings to index
-            self.index.add(embeddings.astype('float32'))
-            
-            logger.info("FAISS index built successfully", 
-                       doc_count=len(self.documents),
-                       dimension=dimension)
-            
+            self.index.add(embeddings.astype("float32"))
+
+            logger.info(
+                "FAISS index built successfully",
+                doc_count=len(self.documents),
+                dimension=dimension
+            )
+
         except Exception as e:
             logger.error("Failed to build FAISS index", error=str(e))
             raise
-    
+
     async def search(self, query: str, top_k: int = None) -> List[Tuple[Document, float]]:
-        """
-        Search for relevant documents
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return (default from config)
-            
-        Returns:
-            List of (Document, score) tuples
-        """
+        """Search for relevant documents"""
         if top_k is None:
             top_k = self.config.faiss_top_k
-        
+
         try:
             if self.index is None or self.index.ntotal == 0:
                 logger.warning("Index is empty")
                 return []
-            
-            # Generate query embedding
-            query_embedding = await self.embedding_service.encode_single(
-                query, 
-                normalize=True
-            )
-            
-            # Search
+
+            query_embedding = await self.embedding_service.encode_single(query, normalize=True)
+
             scores, indices = self.index.search(
-                query_embedding.reshape(1, -1).astype('float32'),
+                query_embedding.reshape(1, -1).astype("float32"),
                 min(top_k, self.index.ntotal)
             )
-            
-            # Prepare results
+
             results = []
             for score, idx in zip(scores[0], indices[0]):
                 if idx < len(self.documents):
                     results.append((self.documents[idx], float(score)))
-            
-            logger.info("Search completed", 
-                       query=query, 
-                       results_count=len(results))
-            
+
+            logger.info("Search completed", query=query, results_count=len(results))
             return results
-            
+
         except Exception as e:
             logger.error("Search failed", error=str(e), query=query)
             return []
-    
+
     def save_index(self):
         """Save FAISS index and documents to disk"""
         try:
-            os.makedirs(os.path.dirname(self.config.faiss_index_path), exist_ok=True)
-            
-            # Save FAISS index
+            index_dir = os.path.dirname(self.config.faiss_index_path)
+            if index_dir:
+                os.makedirs(index_dir, exist_ok=True)
+
             faiss.write_index(self.index, f"{self.config.faiss_index_path}.index")
-            
-            # Save documents
+
             docs_data = [doc.to_dict() for doc in self.documents]
-            with open(f"{self.config.faiss_index_path}.docs.json", 'w') as f:
+            with open(f"{self.config.faiss_index_path}.docs.json", "w") as f:
                 json.dump(docs_data, f, indent=2)
-            
+
             logger.info("Index saved", path=self.config.faiss_index_path)
-            
+
         except Exception as e:
             logger.error("Failed to save index", error=str(e))
             raise
-    
+
     def load_index(self):
         """Load FAISS index and documents from disk"""
         try:
-            # Load FAISS index
             self.index = faiss.read_index(f"{self.config.faiss_index_path}.index")
-            
-            # Load documents
-            with open(f"{self.config.faiss_index_path}.docs.json", 'r') as f:
+
+            with open(f"{self.config.faiss_index_path}.docs.json", "r") as f:
                 docs_data = json.load(f)
                 self.documents = [Document.from_dict(d) for d in docs_data]
-            
-            logger.info("Index loaded", 
-                       path=self.config.faiss_index_path,
-                       doc_count=len(self.documents))
-            
+
+            logger.info("Index loaded", path=self.config.faiss_index_path, doc_count=len(self.documents))
+
         except Exception as e:
             logger.error("Failed to load index", error=str(e))
             raise
-    
-    def add_documents(self, documents: List[Document]):
-        """Add new documents to the index"""
+
+    async def add_documents(self, documents: List[Document], rebuild: bool = True):
+        """
+        Add new documents.
+
+        MVP approach:
+        - Append to document list.
+        - Rebuild index (simple, but OK for MVP).
+        """
         self.documents.extend(documents)
-        # Rebuild index (for simplicity; could be optimized)
-        # In production, use incremental updates
+        if rebuild:
+            await self.build_index()
 
 
 # Singleton instance
@@ -259,11 +257,17 @@ _retrieval_system = None
 
 
 async def get_retrieval_system() -> RetrievalSystem:
-    """Get or create retrieval system singleton"""
+    """
+    Get or create retrieval system singleton.
+
+    We ensure the index is built HERE (async-safe), not inside __init__.
+    """
     global _retrieval_system
     if _retrieval_system is None:
         _retrieval_system = RetrievalSystem()
-        # Build index if not already built
-        if _retrieval_system.index is None or _retrieval_system.index.ntotal == 0:
-            await _retrieval_system.build_index()
+
+    # If index exists but has no vectors yet, build it now
+    if _retrieval_system.index is None or _retrieval_system.index.ntotal == 0:
+        await _retrieval_system.build_index()
+
     return _retrieval_system

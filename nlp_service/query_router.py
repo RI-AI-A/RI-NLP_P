@@ -1,5 +1,5 @@
-"""Query Router - Maps intents and slots to API endpoints"""
-from typing import Dict, Any, Optional
+"""Query Router - Maps intents and slots to Core Backend API endpoints"""
+from typing import Dict, Any
 from urllib.parse import urlencode
 import structlog
 
@@ -7,159 +7,105 @@ logger = structlog.get_logger()
 
 
 class QueryRouter:
-    """Route queries to appropriate API endpoints based on intent and slots"""
-    
+    """Route queries to appropriate Core Backend endpoints based on intent and slots"""
+
     def __init__(self):
         self.route_templates = {
             "kpi_query": self._route_kpi_query,
-            "branch_status": self._route_branch_status,
+
+            # Branch status -> situations (what is happening now)
+            "branch_status": self._route_situations,
+
+            # Performance analysis -> recommendations (why + what to do)
+            "performance_analysis": self._route_recommendations,
+
             "task_management": self._route_task_management,
             "event_query": self._route_event_query,
             "promotion_query": self._route_promotion_query,
             "chitchat": self._route_chitchat,
-            "performance_analysis": self._route_performance_analysis,
-            "unknown": self._route_unknown
+            "unknown": self._route_unknown,
         }
-    
+
     async def route(self, intent: str, slots: Dict[str, Any]) -> str:
-        """
-        Generate API endpoint based on intent and slots
-        
-        Args:
-            intent: Predicted intent
-            slots: Extracted slots
-            
-        Returns:
-            API endpoint URL
-        """
         try:
             router_func = self.route_templates.get(intent, self._route_unknown)
             endpoint = router_func(slots)
-            
-            logger.info("Query routed", 
-                       intent=intent, 
-                       slots=slots, 
-                       endpoint=endpoint)
-            
+
+            logger.info("Query routed", intent=intent, slots=slots, endpoint=endpoint)
             return endpoint
-            
+
         except Exception as e:
             logger.error("Routing failed", error=str(e), intent=intent)
-            return "/error"
-    
+            return "UNKNOWN"
+
     def _route_kpi_query(self, slots: Dict[str, Any]) -> str:
-        """Route KPI queries"""
         branch_id = slots.get("branch_id", "unknown")
-        time_range = slots.get("time_range", "today")
         kpi_type = slots.get("kpi_type", "general")
-        
-        # Build query parameters
-        params = {
-            "date": time_range,
-            "kpi_type": kpi_type
-        }
-        
-        query_string = urlencode(params)
-        return f"/kpis/branch/{branch_id}?{query_string}"
-    
-    def _route_branch_status(self, slots: Dict[str, Any]) -> str:
-        """Route branch status queries"""
+        params = {"branch_id": branch_id, "kpi_type": kpi_type}
+        return f"/api/v1/kpis?{urlencode(params)}"
+
+    def _route_situations(self, slots: Dict[str, Any]) -> str:
         branch_id = slots.get("branch_id", "unknown")
-        return f"/recommendations/{branch_id}"
-    
+        params = {"branch_id": branch_id}
+
+        # Optional filters if you want to support them later
+        if slots.get("time_range"):
+            params["time_range"] = slots["time_range"]
+        if slots.get("situation_type"):
+            params["situation_type"] = slots["situation_type"]
+
+        return f"/api/v1/situations?{urlencode(params)}"
+
+    def _route_recommendations(self, slots: Dict[str, Any]) -> str:
+        branch_id = slots.get("branch_id", "unknown")
+        params = {"branch_id": branch_id}
+        return f"/api/v1/recommendations?{urlencode(params)}"
+
     def _route_task_management(self, slots: Dict[str, Any]) -> str:
-        """Route task management queries"""
-        # Determine if it's a creation or retrieval based on context
-        # For now, default to GET (retrieval)
+        # Placeholder until your core backend supports tasks
         employee_name = slots.get("employee_name")
-        
         if employee_name:
-            params = {"assigned_to": employee_name}
-            query_string = urlencode(params)
-            return f"/tasks?{query_string}"
-        
+            return f"/tasks?{urlencode({'assigned_to': employee_name})}"
         return "/tasks"
-    
+
     def _route_event_query(self, slots: Dict[str, Any]) -> str:
-        """Route event queries"""
-        event_type = slots.get("event_type")
-        time_range = slots.get("time_range")
-        
         params = {}
-        if event_type:
-            params["type"] = event_type
-        if time_range:
-            params["date"] = time_range
-        
+        if slots.get("event_type"):
+            params["type"] = slots["event_type"]
+        if slots.get("time_range"):
+            params["date"] = slots["time_range"]
+
         if params:
-            query_string = urlencode(params)
-            return f"/events?{query_string}"
-        
-        return "/events"
-    
+            return f"/api/v1/events?{urlencode(params)}"
+        return "/api/v1/events"
+
     def _route_promotion_query(self, slots: Dict[str, Any]) -> str:
-        """Route promotion queries"""
-        product_name = slots.get("product_name")
-        time_range = slots.get("time_range")
-        
+        # Placeholder until promotions exist in core backend
         params = {}
-        if product_name:
-            params["product"] = product_name
-        if time_range:
-            params["date"] = time_range
-        
+        if slots.get("product_name"):
+            params["product"] = slots["product_name"]
+        if slots.get("time_range"):
+            params["date"] = slots["time_range"]
+
         if params:
-            query_string = urlencode(params)
-            return f"/promotions?{query_string}"
-        
+            return f"/promotions?{urlencode(params)}"
         return "/promotions"
-    
+
     def _route_chitchat(self, slots: Dict[str, Any]) -> str:
-        """Route chitchat queries"""
         return "/chitchat"
-    
-    def _route_performance_analysis(self, slots: Dict[str, Any]) -> str:
-        """Route performance analysis queries"""
-        branch_id = slots.get("branch_id", "unknown")
-        return f"/recommendations/{branch_id}"
-    
+
     def _route_unknown(self, slots: Dict[str, Any]) -> str:
-        """Route unknown queries"""
-        return "/unknown"
-    
+        return "UNKNOWN"
+
     def get_http_method(self, intent: str, slots: Dict[str, Any]) -> str:
-        """
-        Determine HTTP method based on intent
-        
-        Args:
-            intent: Predicted intent
-            slots: Extracted slots
-            
-        Returns:
-            HTTP method (GET, POST, PUT, DELETE)
-        """
-        # Most queries are GET
-        # POST for task creation (would need additional context)
-        method_map = {
-            "kpi_query": "GET",
-            "branch_status": "GET",
-            "task_management": "GET",  # Could be POST based on context
-            "event_query": "GET",
-            "promotion_query": "GET",
-            "chitchat": "GET",
-            "performance_analysis": "GET",
-            "unknown": "GET"
-        }
-        
-        return method_map.get(intent, "GET")
+        # Everything we do now is GET
+        return "GET"
 
 
-# Singleton instance
 _query_router = None
 
 
 def get_query_router() -> QueryRouter:
-    """Get or create query router singleton"""
     global _query_router
     if _query_router is None:
         _query_router = QueryRouter()
