@@ -30,12 +30,15 @@ def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     version_table = config.get_main_option("version_table", "alembic_version")
+    version_table_schema = config.get_main_option("version_table_schema")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table=version_table,
+        version_table_schema=version_table_schema,
+        include_schemas=True,
     )
 
     with context.begin_transaction():
@@ -51,12 +54,15 @@ def run_migrations_online() -> None:
     )
     
     version_table = config.get_main_option("version_table", "alembic_version")
+    version_table_schema = config.get_main_option("version_table_schema")
 
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             version_table=version_table,
+            version_table_schema=version_table_schema,
+            include_schemas=True,
         )
 
         with context.begin_transaction():

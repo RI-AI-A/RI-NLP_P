@@ -216,6 +216,23 @@ python pipelines/evaluation.py evaluation_data.csv evaluation_report.json
 - Rejection Rate
 - Query Resolution Rate
 
+### New Evaluation Scripts
+We have added specific scripts for targeted evaluation:
+
+```bash
+# Evaluate Intent Classification
+# Uses a synthetic dataset to test intent accuracy
+python evaluate_intents.py
+
+# Evaluate Slot Filling
+# Tests entity extraction precision/recall/F1
+python evaluate_slots.py
+
+# End-to-End Evaluation
+# Tests full pipeline latency and success rate
+python evaluate_end_to_end.py
+```
+
 ## 🔧 Configuration
 
 ### Environment Variables

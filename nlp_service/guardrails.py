@@ -53,7 +53,8 @@ class Guardrails:
         query: str,
         intent: str,
         confidence: float,
-        response: str
+        response: str,
+        sources: List[str] = None
     ) -> GuardrailResult:
         """
         Run all guardrail checks
@@ -91,6 +92,11 @@ class Guardrails:
         hallucination_check = self.check_hallucination(response, query)
         if not hallucination_check:
             return hallucination_check
+            
+        # Check determinism for analytics
+        determinism_check = self.check_determinism(intent, sources or [])
+        if not determinism_check:
+            return determinism_check
         
         return GuardrailResult(True, "All checks passed")
     
@@ -116,17 +122,14 @@ class Guardrails:
                 )
         return GuardrailResult(True)
     
-    def check_confidence(self, confidence: float, threshold: float = None) -> GuardrailResult:
-        """Check if confidence meets threshold"""
-        if threshold is None:
-            threshold = self.config.guardrail_confidence_threshold
-            
+    def check_confidence(self, confidence: float, threshold: float = 0.85) -> GuardrailResult:
+        """Check if confidence meets strict threshold"""
         if confidence < threshold:
             logger.warning("Low confidence", confidence=confidence, threshold=threshold)
             return GuardrailResult(
                 False,
                 f"I'm not confident enough in understanding your request "
-                f"(confidence: {confidence:.2f}). Could you please rephrase?"
+                f"(confidence: {confidence:.2f} < {threshold}). Could you please rephrase?"
             )
         return GuardrailResult(True)
     
@@ -182,6 +185,17 @@ class Guardrails:
                     # Don't reject, but log for monitoring
                     # In production, you might want to add a disclaimer
         
+        return GuardrailResult(True)
+        
+    def check_determinism(self, intent: str, sources: List[str]) -> GuardrailResult:
+        """Enforces that analytics intents do not use LLM sources."""
+        analytics_intents = {"kpi_query", "performance_analysis", "branch_status"}
+        if intent in analytics_intents and any("llm" in s.lower() for s in sources):
+            logger.error("DeterministicViolationError: LLM fallback used for analytics query")
+            return GuardrailResult(
+                False,
+                "DeterministicViolationError: LLM fallback is strictly prohibited for analytics queries."
+            )
         return GuardrailResult(True)
     
     def redact_pii(self, text: str) -> str:

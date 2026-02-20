@@ -98,6 +98,34 @@ class OrchestrationService:
             # Step 4: Fetch Core Backend facts (REAL KPI values etc.)
             core_data = await self._fetch_core_data(routed_endpoint)
 
+            analytics_intents = {"kpi_query", "performance_analysis", "branch_status"}
+            is_analytics = intent in analytics_intents
+
+            if is_analytics:
+                if routed_endpoint == "/unknown" or routed_endpoint is None or not core_data:
+                    # Log the failed parsing query
+                    try:
+                        await self._log_query(db, conversation_id, user_role, query, "rejected", confidence, None)
+                    except Exception:
+                        pass
+                    return {
+                        "success": False,
+                        "error": "QUERY_PARSE_FAILED",
+                        "requires_clarification": True
+                    }
+                else:
+                    # Log the successfully parsed query
+                    query_log = await self._log_query(db, conversation_id, user_role, query, intent, confidence, routed_endpoint)
+                    # Structured Output Contract for analytics
+                    return {
+                        "success": True,
+                        "data": {
+                            "intent": intent,
+                            "filters": slots
+                        },
+                        "query_id": str(query_log.id)
+                    }
+
             # Step 5: Response Generation (use core_data if available)
             response_text, sources = await self._generate_response(
                 query=query,
@@ -110,7 +138,7 @@ class OrchestrationService:
 
             # Step 6: Guardrails Check
             guardrail_result = await self.guardrails.check_all(
-                query, intent, confidence, response_text
+                query, intent, confidence, response_text, sources=sources or []
             )
 
             if not guardrail_result.passed:

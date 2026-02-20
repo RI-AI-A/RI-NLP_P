@@ -7,10 +7,14 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     ffmpeg \
+    portaudio19-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
+
+# Pre-install heavy AI libraries so Docker permanently caches them before reading requirements
+RUN pip install --default-timeout=1000 torch==2.2.0 transformers==4.37.0 sentence-transformers==2.3.1 spacy==3.7.2
 
 # Copy requirements first for better caching
 COPY requirements.txt .
@@ -18,8 +22,8 @@ COPY requirements.txt .
 # Install setuptools first to avoid pkg_resources issues
 RUN pip install --no-cache-dir setuptools wheel
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies with extended timeout for large AI models
+RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
 # Download spaCy model (will be done at runtime if needed)
 # RUN python -m spacy download en_core_web_sm

@@ -11,6 +11,7 @@ class NLPRequest(BaseModel):
     user_role: Literal["manager", "analyst", "staff"] = Field(..., description="User role")
     
     model_config = {
+        "strict": True,
         "json_schema_extra": {
             "examples": [
                 {

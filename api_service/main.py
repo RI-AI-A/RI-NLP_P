@@ -7,6 +7,8 @@ from api_service.services.logging_service import setup_logging
 from api_service.routers import nlp, queries, feedback, health, voice
 from nlp_service.retrieval import get_retrieval_system
 import structlog
+from api_service.middleware.error_handler import setup_exception_handlers
+from api_service.middleware.correlation import CorrelationIdMiddleware
 
 # Setup logging
 setup_logging(api_config.log_level)
@@ -68,6 +70,10 @@ app.include_router(voice.router)
 app.include_router(queries.router)
 app.include_router(feedback.router)
 
+# Add Middlewares and exception handlers
+app.add_middleware(CorrelationIdMiddleware)
+setup_exception_handlers(app)
+
 
 @app.get("/")
 async def root():
@@ -77,21 +83,6 @@ async def root():
         "version": api_config.api_version,
         "status": "running",
         "docs": "/docs"
-    }
-
-
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler"""
-    logger.error("Unhandled exception", 
-                error=str(exc), 
-                path=request.url.path,
-                exc_info=True)
-    
-    return {
-        "error": "An unexpected error occurred",
-        "detail": str(exc) if api_config.log_level == "DEBUG" else "Internal server error"
     }
 
 

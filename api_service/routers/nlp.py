@@ -12,7 +12,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/nlp", tags=["NLP"])
 
 
-@router.post("/query", response_model=NLPResponse)
+@router.post("/query")
 async def process_nlp_query(
     request: NLPRequest,
     db: AsyncSession = Depends(get_database),
